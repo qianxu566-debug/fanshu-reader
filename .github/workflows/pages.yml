@@ -22,12 +22,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: write
+      actions: read
+      pages: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - uses: actions/configure-pages@v5
+      - name: 留存今日官方阅读榜和新书榜
+        if: github.event_name != 'push' && github.ref == 'refs/heads/main'
+        run: |
+          node scripts/history.mjs || echo "::warning::当天没有可用榜单，已记录上游错误。"
+          bash scripts/save-history.sh
       - name: 准备网页并保留上次书目
         shell: bash
         run: |
@@ -41,9 +52,28 @@ jobs:
           esac
       - name: 请求番茄官方书目
         id: update
+        timeout-minutes: 16
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update)
         continue-on-error: true
         run: python3 scripts/update.py _site/catalog.gz
+      - name: 追加今天实际更新的书目在读值
+        if: github.ref == 'refs/heads/main' && (steps.update.outcome == 'success' || steps.update.outcome == 'failure')
+        run: |
+          node scripts/history.mjs _site/catalog.gz --observations-only || echo "::warning::当天没有可用榜单。"
+          bash scripts/save-history.sh
+      - name: 准备榜单日期索引
+        run: |
+          mkdir -p _site/history
+          python3 - <<'PY'
+          import gzip,json,pathlib,shutil
+          out=pathlib.Path('_site/history')
+          dates=[]
+          for f in sorted(pathlib.Path('history').glob('*.json.gz'),reverse=True)[:90]:
+              if any(s['ok'] for s in json.load(gzip.open(f))['scopes']):
+                  shutil.copyfile(f,out/f.name)
+                  dates.append(f.name[:10])
+          (out/'index.json').write_text(json.dumps(dates))
+          PY
       - name: 从上一次未部署的产物恢复直链
         env:
           GH_TOKEN: ${{ github.token }}

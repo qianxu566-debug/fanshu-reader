@@ -6,6 +6,9 @@ const catalog=JSON.parse(gunzipSync(fs.readFileSync(local)));
 const books=new Map(catalog.books.map(b=>[b.id,b]));
 const state=catalog.refresh??={date:'',next:0,pages:{}};
 const date=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+const archiveFile='history/'+date+'.json.gz';
+const savedRanks=fs.existsSync(archiveFile)
+  ?new Map(JSON.parse(gunzipSync(fs.readFileSync(archiveFile))).scopes.filter(s=>s.ok).map(s=>[s.key,s])):new Map();
 if(state.date!==date){state.date=date;state.next=0;}
 const officialScopes=[];
 for(const [g,gender] of [['1','男频'],['0','女频']]){
@@ -39,6 +42,7 @@ function absorb(row){
   for(const key of ['primary','tags'])next[key]=[...new Set([...(old[key]||[]),...(row[key]||[])])];
   if(row.readers!=null)next.readersText=row.readersText||'';
   else if(!row.readersText && old.observed)next.observed=old.observed;
+  if(Number.isFinite(row.words))next.wordsObserved=row.observed;
   if(row.readersText && row.readers==null)next.readers=null;
   next.officialListings=old.officialListings;
   applyListings(next,row.officialListings||old.officialListings);
@@ -52,6 +56,12 @@ function decodeRank(s,font){
   });
 }
 async function rank(job){
+  const saved=savedRanks.get([job.gender,job.cid,job.mold].join('/'));
+  if(saved)return saved.rows.map(b=>({
+    id:b.id,title:b.title,author:b.author,words:b.words,readers:b.readers,status:b.status,
+    intro:b.intro,coverUrl:b.coverUrl,primary:[job.name],channel:job.gender==='1'?'男频':'女频',
+    rankInfo:job.name+(job.mold===2?'阅读榜':'新书榜')+' · 第'+b.pos+'名 · '+date,observed:saved.observed
+  }));
   const q=new URLSearchParams({app_id:2503,rank_list_type:3,offset:0,limit:10,category_id:job.cid,rank_version:'',gender:job.gender,rankMold:job.mold});
   const r=await fetch('https://fanqienovel.com/api/rank/category/list?'+q,{signal:AbortSignal.timeout(20000)});
   if(!r.ok||r.headers.has('retry-after'))throw Error('官方榜单 HTTP '+r.status);
