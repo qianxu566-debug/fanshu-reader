@@ -1,0 +1,65 @@
+name: 发布翻书目录
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '27 21 * * *'
+  workflow_dispatch:
+    inputs:
+      update:
+        description: 从番茄更新书目
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: fanshu-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/configure-pages@v5
+      - name: 准备网页并保留上次书目
+        shell: bash
+        run: |
+          mkdir _site
+          cp index.html catalog.gz _site/
+          code=$(curl --retry 2 --max-time 90 --silent --show-error --output previous.gz --write-out '%{http_code}' "https://qianxu566-debug.github.io/fanshu-reader/catalog.gz?t=$GITHUB_RUN_ID")
+          case "$code" in
+            200) gzip -t previous.gz && mv previous.gz _site/catalog.gz ;;
+            404) echo '使用首次发布书目' ;;
+            *) echo "读取已发布书目失败 $code"; exit 1 ;;
+          esac
+      - name: 请求番茄官方书目
+        id: update
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update)
+        continue-on-error: true
+        run: python3 scripts/update.py _site/catalog.gz
+      - name: 核验目录
+        run: |
+          python3 - <<'PY'
+          import gzip,json
+          b=json.load(gzip.open('_site/catalog.gz'))['books']
+          assert b and len(b)==len({x['id'] for x in b})
+          assert all(x['readers']>=8000 for x in b)
+          print(f'{len(b)} 本')
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: 报告上游更新错误
+        if: steps.update.outcome == 'failure'
+        run: exit 1
