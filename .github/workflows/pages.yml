@@ -12,18 +12,16 @@ on:
         default: true
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
   group: fanshu-pages
   cancel-in-progress: false
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,6 +44,17 @@ jobs:
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update)
         continue-on-error: true
         run: python3 scripts/update.py _site/catalog.gz
+      - name: 从上一次未部署的产物恢复直链
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          prior=$(gh run list --workflow pages.yml --branch main --limit 4 --json databaseId,conclusion --jq 'map(select(.databaseId != '"$GITHUB_RUN_ID"')) | .[0] | select(.conclusion == "failure") | .databaseId')
+          if [[ -n "$prior" ]] && gh run download "$prior" -n github-pages -D recovered-artifact; then
+            mkdir -p recovery
+            tar -xOf recovered-artifact/artifact.tar ./catalog.gz > recovery/catalog.gz
+            gzip -t recovery/catalog.gz
+          fi
       - name: 刷新番茄官方封面直链
         id: covers
         continue-on-error: true
@@ -59,11 +68,18 @@ jobs:
           assert all(x['readers']>=8000 for x in b)
           print(f'{len(b)} 本')
           PY
+      - name: 记录上游异常
+        if: steps.update.outcome == 'failure' || steps.covers.outcome == 'failure'
+        run: echo "::warning::上游更新部分失败，本次发布保留已核验结果。"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-      - name: 报告上游更新错误
-        if: steps.update.outcome == 'failure' || steps.covers.outcome == 'failure'
-        run: exit 1

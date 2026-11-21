@@ -11,6 +11,12 @@ function expires(url){
   catch{return 0}
 }
 function remaining(b){return Math.max(expires(b.coverUrl),expires(b.longCoverUrl))-now}
+// Retain verified links from the shipped recovery snapshot even when the previous live version predates them.
+const seed=JSON.parse(gunzipSync(fs.readFileSync(fs.existsSync('recovery/catalog.gz')?'recovery/catalog.gz':new URL('../catalog.gz',import.meta.url))));
+for(const entry of seed.books){
+  const b=books.get(entry.id);
+  if(b&&expires(entry.longCoverUrl)>Math.max(now,expires(b.longCoverUrl)))b.longCoverUrl=entry.longCoverUrl;
+}
 const before=catalog.books.filter(b=>remaining(b)>0).length;
 let requests=0, touched=new Set(), stopped='';
 async function official(path,params){
@@ -19,7 +25,7 @@ async function official(path,params){
   const r=await fetch('https://fanqienovel.com'+path+'?'+new URLSearchParams(params),{signal:AbortSignal.timeout(18000)});
   if(!r.ok||r.headers.has('retry-after'))throw Error('官方 HTTP '+r.status);
   const data=await r.json();
-  if(data.code===-100)return null;
+  if(data.code===-100 || (path==='/api/book/info' && data.code===-1))return null;
   if(data.code!==0)throw Error('官方状态 '+data.code);
   return data.data;
 }
@@ -37,7 +43,7 @@ const scopes=JSON.parse(fs.readFileSync(new URL('./scopes.json',import.meta.url)
 const lanes=scopes.flatMap(([gender,category_id])=>[2,1].map(rankMold=>({gender,category_id,rankMold,offset:0,miss:0,last:''})));
 const recent=now-Date.parse(catalog.refresh?.coverSweep||0)<3*86400000;
 try{
-  if(!recent){
+  if(!recent && catalog.books.filter(b=>remaining(b)>3*86400000).length<books.size*.65){
     let active=lanes;
     for(let round=0;round<14&&active.length;round++){
       const next=[];
