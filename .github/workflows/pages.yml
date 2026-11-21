@@ -46,6 +46,10 @@ jobs:
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update)
         continue-on-error: true
         run: python3 scripts/update.py _site/catalog.gz
+      - name: 刷新番茄官方封面直链
+        id: covers
+        continue-on-error: true
+        run: node scripts/covers.mjs _site/catalog.gz
       - name: 核验目录
         run: |
           python3 - <<'PY'
@@ -61,5 +65,5 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
       - name: 报告上游更新错误
-        if: steps.update.outcome == 'failure'
+        if: steps.update.outcome == 'failure' || steps.covers.outcome == 'failure'
         run: exit 1

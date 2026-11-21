@@ -210,13 +210,15 @@ function applyFilters(){
 }
 function link(url,label){return /^https:\/\//.test(url||'')?'<a target="_blank" rel="noopener" href="'+esc(url)+'">'+esc(label)+'</a>':''}
 function coverSource(b){
-  // Prefer the current official image and use an existing thumbnail on failure.
-  if(!b.coverUrl&&/^书封\/\d+\.img$/.test(b.coverFile||''))return b.coverFile;
-  if(!/^https:\/\//.test(b.coverUrl||''))return '';
-  try{
-    const expiry=new URL(b.coverUrl).searchParams.get('x-expires');
-    return expiry&&Number(expiry)*1000<=Date.now()?(b.coverFile||''):b.coverUrl;
-  }catch{return ''}
+  const now=Date.now();
+  for(const candidate of [b.longCoverUrl,b.coverUrl]){
+    if(!candidate)continue;
+    try{
+      const url=new URL(candidate),expiry=url.searchParams.get('x-expires');
+      if(url.protocol==='https:'&&(!expiry||Number(expiry)*1000>now))return url.href;
+    }catch{}
+  }
+  return '';
 }
 const verifiedTags=new Map();
 function cardTags(b){
